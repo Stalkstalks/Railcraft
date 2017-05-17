@@ -1,17 +1,8 @@
-/*------------------------------------------------------------------------------
- Copyright (c) CovertJaguar, 2011-2016
- http://railcraft.info
-
- This code is the property of CovertJaguar
- and may only be used with explicit written
- permission unless otherwise specified on the
- license page at http://railcraft.info/wiki/info:license.
- -----------------------------------------------------------------------------*/
 package mods.railcraft.common.carts;
 
+import mods.railcraft.common.gui.EnumGui;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.entity.item.EntityItem;
-import net.minecraft.entity.item.EntityMinecart;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.init.Blocks;
@@ -26,58 +17,24 @@ import net.minecraft.util.EnumHand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
-import java.util.List;
-
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-
-import mods.railcraft.common.gui.EnumGui;
-import mods.railcraft.common.util.misc.Game;
+import java.util.List;
 
 public class EntityCartHopper extends CartBaseContainer implements IHopper {
-    private boolean enabled = true;
-    private int transferCooldown = -1;
-    private final BlockPos lastPos = BlockPos.ORIGIN;
+    /**
+     * Whether this hopper minecart is being blocked by an activator rail.
+     */
+    private boolean isBlocked = true;
+    private int transferTicker = -1;
+    private final BlockPos lastPosition = BlockPos.ORIGIN;
 
-    public EntityCartHopper(World world) {
-        super(world);
+    public EntityCartHopper(World worldIn) {
+        super(worldIn);
     }
 
-    public EntityCartHopper(World world, double x, double y, double z) {
-        super(world, x, y, z);
-    }
-
-    @Override
-    public IBlockState getDefaultDisplayTile() {
-        return Blocks.HOPPER.getDefaultState();
-    }
-
-    @Override
-    public int getDefaultDisplayTileOffset() {
-        return 1;
-    }
-
-    @Override
-    public boolean canAcceptPushedItem(EntityMinecart requester, ItemStack stack) {
-        return true;
-    }
-
-    @Override
-    public boolean canProvidePulledItem(EntityMinecart requester, ItemStack stack) {
-        return true;
-    }
-
-    @Override
-    public boolean doInteract(EntityPlayer player, @Nullable ItemStack stack, @Nullable EnumHand hand) {
-        if (Game.isHost(worldObj)) {
-            player.displayGUIChest(this);
-        }
-        return true;
-    }
-
-    @Override
-    public boolean canPassItemRequests() {
-        return true;
+    public EntityCartHopper(World worldIn, double x, double y, double z) {
+        super(worldIn, x, y, z);
     }
 
     @Override
@@ -85,54 +42,117 @@ public class EntityCartHopper extends CartBaseContainer implements IHopper {
         return RailcraftCarts.HOPPER;
     }
 
+    @Nonnull
     @Override
+    protected EnumGui getGuiType() {
+        throw new UnsupportedOperationException("not supported");
+    }
+
+    public IBlockState getDefaultDisplayTile() {
+        return Blocks.HOPPER.getDefaultState();
+    }
+
+    public int getDefaultDisplayTileOffset() {
+        return 1;
+    }
+
+    /**
+     * Returns the number of slots in the inventory.
+     */
     public int getSizeInventory() {
         return 5;
     }
 
-    @Nonnull
-    @Override
-    public Container createContainer(@Nonnull InventoryPlayer playerInventory, @Nonnull EntityPlayer playerIn) {
-        return new ContainerHopper(playerInventory, this, playerIn);
+    public boolean processInitialInteract(EntityPlayer player, @Nullable ItemStack stack, EnumHand hand) {
+        if (net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(new net.minecraftforge.event.entity.minecart.MinecartInteractEvent(this, player, stack, hand)))
+            return true;
+        if (!this.worldObj.isRemote) {
+            player.displayGUIChest(this);
+        }
+
+        return true;
     }
 
-    @Nonnull
-    @Override
-    public String getGuiID() {
-        return "minecraft:hopper";
+    /**
+     * Called every tick the minecart is on an activator rail.
+     */
+    public void onActivatorRailPass(int x, int y, int z, boolean receivingPower) {
+        boolean flag = !receivingPower;
+
+        if (flag != this.getBlocked()) {
+            this.setBlocked(flag);
+        }
     }
 
-    @Nonnull
-    @Override
-    protected EnumGui getGuiType() {
-        throw new Error("Should not be called");
+    /**
+     * Get whether this hopper minecart is being blocked by an activator rail.
+     */
+    public boolean getBlocked() {
+        return this.isBlocked;
     }
 
-    @Override
+    /**
+     * Set whether this hopper minecart is being blocked by an activator rail.
+     */
+    public void setBlocked(boolean p_96110_1_) {
+        this.isBlocked = p_96110_1_;
+    }
+
+    /**
+     * Returns the worldObj for this tileEntity.
+     */
+    public World getWorld() {
+        return this.worldObj;
+    }
+
+    /**
+     * Gets the world X position for this hopper entity.
+     */
+    public double getXPos() {
+        return this.posX;
+    }
+
+    /**
+     * Gets the world Y position for this hopper entity.
+     */
+    public double getYPos() {
+        return this.posY + 0.5D;
+    }
+
+    /**
+     * Gets the world Z position for this hopper entity.
+     */
+    public double getZPos() {
+        return this.posZ;
+    }
+
+    /**
+     * Called to update the entity's position/logic.
+     */
     public void onUpdate() {
         super.onUpdate();
 
-        if (Game.isHost(worldObj) && !isDead && enabled) {
+        if (!this.worldObj.isRemote && this.isEntityAlive() && this.getBlocked()) {
             BlockPos blockpos = new BlockPos(this);
 
-            if (blockpos.equals(this.lastPos)) {
-                --this.transferCooldown;
+            if (blockpos.equals(this.lastPosition)) {
+                --this.transferTicker;
             } else {
-                this.transferCooldown = 0;
+                this.setTransferTicker(0);
             }
 
-            if (transferCooldown <= 0) {
-                this.transferCooldown = 0;
+            if (!this.canTransfer()) {
+                this.setTransferTicker(0);
 
                 if (this.captureDroppedItems()) {
-                    this.transferCooldown = 4;
+                    this.setTransferTicker(4);
                     this.markDirty();
                 }
             }
         }
     }
 
-    private boolean captureDroppedItems() {
+    public boolean captureDroppedItems() {
         if (TileEntityHopper.captureDroppedItems(this)) {
             return true;
         } else {
@@ -146,43 +166,43 @@ public class EntityCartHopper extends CartBaseContainer implements IHopper {
         }
     }
 
-    @Override
-    public World getWorld() {
-        return worldObj;
-    }
-
-    @Override
-    public double getXPos() {
-        return posX;
-    }
-
-    @Override
-    public double getYPos() {
-        return posY;
-    }
-
-    @Override
-    public double getZPos() {
-        return posZ;
-    }
-
-    @Override
+    /**
+     * (abstract) Protected helper method to write subclass entity data to NBT.
+     */
     protected void writeEntityToNBT(NBTTagCompound compound) {
         super.writeEntityToNBT(compound);
-        compound.setInteger("TransferCooldown", this.transferCooldown);
-        compound.setBoolean("Enabled", this.enabled);
+        compound.setInteger("TransferCooldown", this.transferTicker);
+        compound.setBoolean("Enabled", this.isBlocked);
     }
 
-    @Override
+    /**
+     * (abstract) Protected helper method to read subclass entity data from NBT.
+     */
     protected void readEntityFromNBT(NBTTagCompound compound) {
         super.readEntityFromNBT(compound);
-        this.transferCooldown = compound.getInteger("TransferCooldown");
-        this.enabled = !compound.hasKey("Enabled") || compound.getBoolean("Enabled");
+        this.transferTicker = compound.getInteger("TransferCooldown");
+        this.isBlocked = !compound.hasKey("Enabled") || compound.getBoolean("Enabled");
     }
 
-    @Nonnull
-    @Override
-    public Type getType() {
-        return Type.HOPPER;
+    /**
+     * Sets the transfer ticker, used to determine the delay between transfers.
+     */
+    public void setTransferTicker(int p_98042_1_) {
+        this.transferTicker = p_98042_1_;
+    }
+
+    /**
+     * Returns whether the hopper cart can currently transfer an item.
+     */
+    public boolean canTransfer() {
+        return this.transferTicker > 0;
+    }
+
+    public String getGuiID() {
+        return "minecraft:hopper";
+    }
+
+    public Container createContainer(InventoryPlayer playerInventory, EntityPlayer playerIn) {
+        return new ContainerHopper(playerInventory, this, playerIn);
     }
 }
